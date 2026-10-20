@@ -1,0 +1,43 @@
+{
+ "updated": "Oct 19, 2026 8:17 PM",
+ "data": {
+  "October": [
+   {
+    "date": "OCT 03",
+    "desc": "GAD ORIENTATION PROGRAM",
+    "duties": {
+     "PHOTOGRAPHER": "ENGANO",
+     "LAYOUT ARTIST": "BANZON"
+    },
+    "note": "",
+    "postTime": "",
+    "status": "Pending",
+    "priority": true,
+    "updatedAt": "Oct 19, 2026 8:17 PM"
+   },
+   {
+    "date": "OCT 05",
+    "desc": "VISIT OF MOL OFFICIALS",
+    "duties": {
+     "VIDEOGRAPHER": "MAMARIL"
+    },
+    "note": "",
+    "postTime": "",
+    "status": "Pending",
+    "priority": false,
+    "updatedAt": "Oct 19, 2026 8:17 PM"
+   }
+  ],
+  "November": [],
+  "December": [],
+  "January": [],
+  "February": [],
+  "March": [],
+  "April": [],
+  "May": [],
+  "June": [],
+  "July": [],
+  "August": [],
+  "September": []
+ }
+}
