@@ -138,6 +138,7 @@ body.light-mode-bg .ios-glass-light input { background: rgba(0, 0, 0, 0.05); }
                     <div class="px-3 py-1.5 rounded-xl text-right border ios-card-bg" id="updatedCard">
                         <span class="text-[9px] font-bold block uppercase tracking-widest text-ios-green">Calendar Updated</span>
                         <span id="updatedText" class="text-xs font-mono font-semibold">Never</span>
+                        <span id="syncStatus" class="text-[9px] block opacity-70">...</span>
                     </div>
 
                     <button onclick="toggleTheme()" class="p-2 rounded-xl border font-bold text-xs transition shadow ios-card-bg" id="themeToggleBtn" title="Toggle Theme">☀️</button>
@@ -497,6 +498,23 @@ const defaultDatabase = {
 let appData = JSON.parse(localStorage.getItem('fcro_multimonth_db_v15')) || defaultDatabase;
 let lastUpdatedTime = localStorage.getItem('fcro_last_updated') || "Oct 19, 2026 8:17 PM";
 
+/* ---------- Shared cloud sync (Firebase Realtime Database, REST) ----------
+   Paste your database URL below (no trailing slash), e.g.
+   "https://fcro-command-center-default-rtdb.asia-southeast1.firebasedatabase.app"
+   Leave it empty to keep data only in this browser (not shared). */
+const FIREBASE_DB_URL = "";
+const SYNC_PATH = "fcro_calendar";
+const POLL_MS = 8000;
+let lastSyncedJson = null;
+let syncBusy = false;
+
+function syncEnabled() { return !!FIREBASE_DB_URL; }
+
+function setSyncStatus(text) {
+    const el = document.getElementById('syncStatus');
+    if (el) el.innerText = text;
+}
+
 function setUpdatedTimestamp() {
     const now = new Date();
     const options = { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' };
@@ -506,7 +524,62 @@ function setUpdatedTimestamp() {
 }
 
 function saveToStorage() {
-    localStorage.setItem('fcro_multimonth_db_v15', JSON.stringify(appData));
+    const json = JSON.stringify(appData);
+    localStorage.setItem('fcro_multimonth_db_v15', json);
+    if (syncEnabled() && json !== lastSyncedJson) pushToCloud(json);
+}
+
+async function pushToCloud(json) {
+    try {
+        setSyncStatus('Saving...');
+        const res = await fetch(`${FIREBASE_DB_URL}/${SYNC_PATH}.json`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ json, updated: lastUpdatedTime })
+        });
+        if (!res.ok) throw new Error(res.status);
+        lastSyncedJson = json;
+        setSyncStatus('Synced');
+    } catch (err) {
+        setSyncStatus('Offline - not shared');
+    }
+}
+
+async function pullFromCloud(initial) {
+    if (!syncEnabled() || syncBusy) return;
+    syncBusy = true;
+    try {
+        const res = await fetch(`${FIREBASE_DB_URL}/${SYNC_PATH}.json`, { cache: 'no-store' });
+        if (!res.ok) throw new Error(res.status);
+        const remote = await res.json();
+        if (remote && remote.json) {
+            if (remote.json !== JSON.stringify(appData)) {
+                // Don't overwrite while the user is editing a form
+                const modalOpen = document.querySelector('#eventModal:not(.hidden), #importModal:not(.hidden)');
+                if (!modalOpen) {
+                    appData = JSON.parse(remote.json);
+                    lastSyncedJson = remote.json;
+                    if (remote.updated) {
+                        lastUpdatedTime = remote.updated;
+                        localStorage.setItem('fcro_last_updated', lastUpdatedTime);
+                        document.getElementById('updatedText').innerText = lastUpdatedTime;
+                    }
+                    localStorage.setItem('fcro_multimonth_db_v15', remote.json);
+                    renderTables();
+                    renderAnalyticsBreakdown();
+                }
+            } else {
+                lastSyncedJson = remote.json;
+            }
+            setSyncStatus('Synced');
+        } else if (initial) {
+            // Cloud is empty: seed it with the current data
+            await pushToCloud(JSON.stringify(appData));
+        }
+    } catch (err) {
+        setSyncStatus('Offline - not shared');
+    }
+    syncBusy = false;
 }
 
 function initApp() {
@@ -515,6 +588,12 @@ function initApp() {
     renderTables();
     renderAnalyticsBreakdown();
     updateClock();
+    if (syncEnabled()) {
+        pullFromCloud(true);
+        setInterval(() => pullFromCloud(false), POLL_MS);
+    } else {
+        setSyncStatus('Local only');
+    }
 }
 
 /* ---------- Tabs ---------- */
