@@ -539,50 +539,66 @@ async function pushToCloud() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ json, updated: lastUpdatedTime })
         });
-        if (!res.ok) throw new Error(res.status);
+        if (!res.ok) throw new Error('HTTP ' + res.status + (res.status === 401 ? ' (publish Firebase rules)' : ''));
         lastSyncedJson = json;
         saveTimer = null;
-        setSyncStatus('Synced');
+        setSyncStatus('Live - ' + APP_VERSION);
     } catch (err) {
-        setSyncStatus('Offline - not shared');
+        setSyncStatus('Not shared: ' + err.message);
     }
+}
+
+const APP_VERSION = "v4-live";
+
+function applyRemote(remote) {
+    if (!remote || !remote.json) return false;
+    if (remote.json === JSON.stringify(appData)) { lastSyncedJson = remote.json; return true; }
+    if (saveTimer) return true; // our own change is waiting to be saved
+    const modalOpen = document.querySelector('#eventModal:not(.hidden), #importModal:not(.hidden)');
+    const typing = document.activeElement && document.activeElement.tagName === 'TEXTAREA';
+    if (modalOpen || typing) return true;
+    appData = JSON.parse(remote.json);
+    if (remote.updated) {
+        lastUpdatedTime = remote.updated;
+        localStorage.setItem('fcro_last_updated', lastUpdatedTime);
+        document.getElementById('updatedText').innerText = lastUpdatedTime;
+    }
+    localStorage.setItem('fcro_multimonth_db_v15', remote.json);
+    lastSyncedJson = remote.json;
+    renderTables();
+    renderAnalyticsBreakdown();
+    return true;
 }
 
 async function pullFromCloud(initial) {
     if (!syncEnabled() || syncBusy) return;
-    if (saveTimer) return; // our own change is waiting to be saved
     syncBusy = true;
     try {
         const res = await fetch(`${FIREBASE_DB_URL}/${SYNC_PATH}.json`, { cache: 'no-store' });
-        if (!res.ok) throw new Error(res.status);
+        if (!res.ok) throw new Error('HTTP ' + res.status + (res.status === 401 ? ' (publish Firebase rules)' : ''));
         const remote = await res.json();
-        if (remote && remote.json) {
-            if (remote.json !== JSON.stringify(appData)) {
-                const modalOpen = document.querySelector('#eventModal:not(.hidden), #importModal:not(.hidden)');
-                const typing = document.activeElement && document.activeElement.tagName === 'TEXTAREA';
-                if (!modalOpen && !typing) {
-                    appData = JSON.parse(remote.json);
-                    if (remote.updated) {
-                        lastUpdatedTime = remote.updated;
-                        localStorage.setItem('fcro_last_updated', lastUpdatedTime);
-                        document.getElementById('updatedText').innerText = lastUpdatedTime;
-                    }
-                    localStorage.setItem('fcro_multimonth_db_v15', remote.json);
-                    lastSyncedJson = remote.json;
-                    renderTables();
-                    renderAnalyticsBreakdown();
-                }
-            } else {
-                lastSyncedJson = remote.json;
-            }
-            setSyncStatus('Synced');
-        } else if (initial) {
-            await pushToCloud();
-        }
+        if (remote && remote.json) applyRemote(remote);
+        else if (initial) await pushToCloud();
+        setSyncStatus('Live - ' + APP_VERSION);
     } catch (err) {
-        setSyncStatus('Offline - not shared');
+        setSyncStatus('Not shared: ' + err.message);
     }
     syncBusy = false;
+}
+
+function startLiveStream() {
+    if (!window.EventSource) return;
+    const es = new EventSource(`${FIREBASE_DB_URL}/${SYNC_PATH}.json`);
+    const handler = (e) => {
+        try {
+            const msg = JSON.parse(e.data);
+            if (msg && msg.path === '/' && msg.data) { applyRemote(msg.data); setSyncStatus('Live - ' + APP_VERSION); }
+            else if (msg && msg.path && msg.data !== undefined) pullFromCloud(false);
+        } catch (err) {}
+    };
+    es.addEventListener('put', handler);
+    es.addEventListener('patch', handler);
+    es.onerror = () => setSyncStatus('Reconnecting...');
 }
 
 function initApp() {
@@ -593,7 +609,8 @@ function initApp() {
     updateClock();
     if (syncEnabled()) {
         pullFromCloud(true);
-        setInterval(() => pullFromCloud(false), POLL_MS);
+        startLiveStream();
+        setInterval(() => pullFromCloud(false), 15000); // safety net
     } else {
         setSyncStatus('Local only - database not set');
     }
